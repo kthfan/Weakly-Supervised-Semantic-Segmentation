@@ -37,6 +37,25 @@ seam1 = SEAM.load("./model.h5", classes=10)
 
 
 ## Affine
+Read image:
+
+```python
+I = cv2.imread("./img.jpg").astype(np.float32) / 255
+I = np.expand_dims(I, 0) # [batch_size, height, width, n_channel]
+```
+
+Generate affine code and arguments:
+```python
+affine = Affine()
+code, args = affine.random_affine_code()
+inv_args = affine.inverse_affine_code(code, args)
+```
+
+Apply affine:
+```python
+A_I = affine.apply_affine(I, code, args)     # transformed image
+R_I = affine.apply_affine(I, code, inv_args) # inverse transformed image
+```
 
 
 # References
