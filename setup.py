@@ -12,7 +12,8 @@ setup(
     packages=find_packages(
         where='src',
         include=['*'],
-    )
+    ),
+    package_dir={"": "src"}
 )
 
 
