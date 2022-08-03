@@ -11,9 +11,12 @@ pip install git+https://github.com/kthfan/Weakly-Supervised-Semantic-Segmentatio
 ## import package
 ```python
 from wsss import SEAM, Pixel2Prototype
+from wsss.utils import Affine, nonlocal_neural_network
 ```
 
 ## SEAM
+Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentation
+
 Define backbone of CNN:
 ```python
 img_input = tf.keras.layers.Input((28, 28, 1))
@@ -85,6 +88,20 @@ R_I = affine.apply_affine(I, code, inv_args) # inverse transformed image
 
 
 # References
-1. [Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentaion](https://openaccess.thecvf.com/content_CVPR_2020/papers/Wang_Self-Supervised_Equivariant_Attention_Mechanism_for_Weakly_Supervised_Semantic_Segmentation_CVPR_2020_paper.pdf)
-2. [Non-local Neural Networks](https://openaccess.thecvf.com/content_cvpr_2018/papers/Wang_Non-Local_Neural_Networks_CVPR_2018_paper.pdf)
-3. [https://github.com/YudeWang/SEAM](https://github.com/YudeWang/SEAM) 
+1. Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentaion
+
+https://openaccess.thecvf.com/content_CVPR_2020/papers/Wang_Self-Supervised_Equivariant_Attention_Mechanism_for_Weakly_Supervised_Semantic_Segmentation_CVPR_2020_paper.pdf  
+https://ieeexplore.ieee.org/abstract/document/9157474  
+https://arxiv.org/pdf/2004.04581.pdf  
+
+2. Non-local Neural Networks
+
+https://openaccess.thecvf.com/content_cvpr_2018/papers/Wang_Non-Local_Neural_Networks_CVPR_2018_paper.pdf  
+https://arxiv.org/pdf/1711.07971.pdf  
+https://ieeexplore.ieee.org/document/8578911  
+
+3. The implementation of Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentaion.
+
+https://github.com/YudeWang/SEAM
+
+
