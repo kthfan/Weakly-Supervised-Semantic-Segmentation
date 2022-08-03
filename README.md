@@ -1,7 +1,18 @@
-# SEAM
-The implementation of Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentaion.
+# Weakly-Supervised-Semantic-Segmentation
+Weakly Supervised Semantic Segmentation implementations using tensorflow.
+
+# Installation
+```bash
+pip install git+[https://github.com/lucasb-eyer/pydensecrf](https://github.com/kthfan/Weakly-Supervised-Semantic-Segmentation.git
+```
 
 # Usage
+
+## import package
+```python
+from wsss import SEAM, Pixel2Prototype
+```
+
 ## SEAM
 Define backbone of CNN:
 ```python
@@ -35,6 +46,21 @@ seam.save("./model.h5")
 seam1 = SEAM.load("./model.h5", classes=10)
 ```
 
+## Pixel2Prototype
+Similars to SEAM:
+```python
+img_input = tf.keras.layers.Input((28, 28, 1))
+x = tf.keras.layers.Conv2D(64, 3, padding="same")(img_input)
+x = tf.keras.layers.BatchNormalization()(x)
+x = tf.keras.layers.Activation("relu")(x)
+x = tf.keras.layers.Conv2D(128, 3, padding="same")(x)
+proj = tf.keras.layers.Conv2D(128, 1)(x)
+        
+p2p = Pixel2Prototype(img_input, x, 10, project_feature=proj)
+p2p.compile(tf.keras.optimizers.Adam(learning_rate=1e-4), loss=tf.keras.losses.categorical_crossentropy, metrics=['accuracy'])
+p2p.fit(X_train, y_train)
+
+```
 
 ## Affine
 Read image:
