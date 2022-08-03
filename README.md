@@ -3,7 +3,7 @@ Weakly Supervised Semantic Segmentation implementations using tensorflow.
 
 # Installation
 ```bash
-pip install git+[https://github.com/lucasb-eyer/pydensecrf](https://github.com/kthfan/Weakly-Supervised-Semantic-Segmentation.git
+pip install git+https://github.com/kthfan/Weakly-Supervised-Semantic-Segmentation.git
 ```
 
 # Usage
