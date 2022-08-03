@@ -9,7 +9,7 @@ setup(
     author="kthfan",
     author_email="3999932@gmail.com",
     url="https://github.com/kthfan/Weakly-Supervised-Semantic-Segmentation",
-    packages=["wsss"]
+    packages=["src"]
 )
 
 
