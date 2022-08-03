@@ -1,5 +1,5 @@
 # coding: UTF-8
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name="wsss",
@@ -9,7 +9,10 @@ setup(
     author="kthfan",
     author_email="3999932@gmail.com",
     url="https://github.com/kthfan/Weakly-Supervised-Semantic-Segmentation",
-    packages=["src"]
+    packages=find_packages(
+        where='src',
+        include=['*'],
+    )
 )
 
 
