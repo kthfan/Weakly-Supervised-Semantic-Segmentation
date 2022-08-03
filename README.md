@@ -15,7 +15,7 @@ from wsss.utils import Affine, nonlocal_neural_network
 ```
 
 ## SEAM
-Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentation
+The implementation of Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentation.
 
 Define backbone of CNN:
 ```python
@@ -50,6 +50,8 @@ seam1 = SEAM.load("./model.h5", classes=10)
 ```
 
 ## Pixel2Prototype
+The implementation of Weakly Supervised Semantic Segmentation by Pixel-to-Prototype Contrast.  
+
 Similars to SEAM:
 ```python
 img_input = tf.keras.layers.Input((28, 28, 1))
