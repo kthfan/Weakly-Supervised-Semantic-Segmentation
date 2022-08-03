@@ -3,6 +3,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_addons as tfa 
 
+
 class Affine:
     '''
     Supported affine transformations: rotate, rescale(both height and width), resize, flip, translation, shear.
@@ -31,124 +32,152 @@ class Affine:
                  shear_x_domain=(-0.5, 0.5), shear_y_domain=(-0.5, 0.5), shear_scale_domain=(0.5, 2)):
         
         r_flip = lambda I,v,h: self.flip(I, v>0.5, h>0.5)
-        r_rescale = lambda I,r,_,y,x,s: self.rescale(I, r, 1, y, x, s)
+        r_rescale = lambda I,r,_,y,x,s: self.rescale(I, r, 1., y, x, s)
         self.affine_functions = [self.rotate, r_rescale, self.rescale, r_flip, self.translation, self.shear]
-        self._affine_functions_argc = np.array([1, 5, 5, 2, 2, 3])
-        _argc = np.array([1, 5, 5, 2, 2, 3])
+        
         if affine_weights is None:
-            affine_weights = np.ones(len(self.affine_functions), dtype=np.float64)
-        affine_weights = np.array(affine_weights, dtype=np.float64)
-        affine_weights /= affine_weights.sum()
+            affine_weights = tf.ones(len(self.affine_functions), dtype=tf.float32)
+        affine_weights = tf.constant(affine_weights, dtype=tf.float32)
+        affine_weights /= tf.reduce_sum(affine_weights)
         self.affine_weights = affine_weights 
         self.fill_mode = fill_mode
         
-        self._args_inverse = np.array([
+        self._affine_weights_upper = tf.cumsum(self.affine_weights) 
+        self._affine_weights_lower = tf.concat([tf.zeros(1, dtype=self.affine_weights.dtype), self._affine_weights_upper[:-1]], axis=0) 
+        
+        self._args_inverse = [
             lambda a: -a,
-            lambda a: np.array([1/a[0], 1/a[1], a[2], a[3], 1/a[4]], dtype=a.dtype),
-            lambda a: np.array([a[0], a[1], a[2], a[3], 1/a[4]], dtype=a.dtype),
-            lambda a: a.copy(),
+            lambda a: tf.stack([1/a[0], 1/a[1], a[2], a[3], 1/a[4]], axis=0),
+            lambda a: tf.stack([a[0], a[1], a[2], a[3], 1/a[4]], axis=0),
+            lambda a: a,
             lambda a: -a,
-            lambda a: np.array([-a[0], -a[1], 1/a[2]/(1-a[0]*a[1]), a[3], a[4]], dtype=a.dtype)
-        ], dtype=object)
-        self._args_min = np.array([
+            lambda a: tf.stack([-a[0], -a[1], 1/a[2]/(1-a[0]*a[1]), a[3], a[4]], axis=0)
+        ]
+        self._args_min = tf.constant([
             [rotate_domain[0], np.nan, np.nan, np.nan, np.nan],
             [rescale_ratio_domain[0], 0, rescale_x_domain[0], rescale_y_domain[0], rescale_scale_domain[0]],
             [np.nan, np.nan, rescale_x_domain[0], rescale_y_domain[0], rescale_scale_domain[0]],
             [0, 0, np.nan, np.nan, np.nan],
             [translation_x_domain[0], translation_y_domain[0], np.nan, np.nan, np.nan],
             [shear_x_domain[0], shear_y_domain[0], shear_scale_domain[0], np.nan, np.nan]
-        ], dtype=np.float32)
-        self._args_max = np.array([
+        ], dtype=tf.float32)
+        self._args_max = tf.constant([
             [rotate_domain[1], np.nan, np.nan, np.nan, np.nan],
             [rescale_ratio_domain[1], 1, rescale_x_domain[1], rescale_y_domain[1], rescale_scale_domain[1]],
             [np.nan, np.nan, rescale_x_domain[1], rescale_y_domain[1], rescale_scale_domain[1]],
             [1, 1, np.nan, np.nan, np.nan],
             [translation_x_domain[1], translation_y_domain[1], np.nan, np.nan, np.nan],
             [shear_x_domain[1], shear_y_domain[1], shear_scale_domain[1], np.nan, np.nan]
-        ], dtype=np.float32)
+        ], dtype=tf.float32)
+        
+    def _inverse_args(self, code, arg):
+        if code == 0:
+            return self._args_inverse[0](arg)
+        elif code == 1:
+            return self._args_inverse[1](arg)
+        elif code == 2:
+            return self._args_inverse[2](arg)
+        elif code == 3:
+            return self._args_inverse[3](arg)
+        elif code == 4:
+            return self._args_inverse[4](arg)
+        elif code == 5:
+            return self._args_inverse[5](arg)
+        else:
+            # compiling or except code
+            return arg
         
     def inverse_affine_code(self, code, args):
-        func = self._args_inverse[code]
-        args = np.stack([f(a) for f, a in zip(func, args)], axis=0)
-        return args
+        inv_args = tf.map_fn(lambda e: self._inverse_args(e[0], e[1]) ,(code, args), dtype=args.dtype)
+        return inv_args
     
     def random_affine_code(self, size):
-        code = np.random.multinomial(1, self.affine_weights, size=size)
-        code = np.argmax(code, axis=1)
-        args = np.random.uniform(0, 1, (size, self._args_min.shape[1]))
-        a_o = self._args_min[code]
-        a_s =  self._args_max[code] - a_o
+        code = tf.expand_dims(tf.random.uniform([size]), -1)
+        code = tf.where((self._affine_weights_lower<=code) & (code<=self._affine_weights_upper))[:, 1]
+        
+        args = tf.random.uniform((size, self._args_min.shape[1]))
+        a_o = tf.gather(self._args_min, code, axis=0)
+        a_s =  tf.gather(self._args_max, code, axis=0) - a_o
         args = a_s*args + a_o
         return code, args
     
+    def _standard_affine(self, I, code, arg):
+        if code==0:
+            I = self.affine_functions[0](I, arg[0])
+        elif code==1:
+            I = self.affine_functions[1](I, arg[0], tf.ones_like(arg[0]), arg[2], arg[3], arg[4])
+        elif code==2:
+            I = self.affine_functions[2](I, None, None, arg[2], arg[3], arg[4])
+        elif code==3:
+            I = self.affine_functions[3](I, arg[0], arg[1])
+        elif code==4:
+            I = self.affine_functions[4](I, arg[0], arg[1])
+        elif code==5:
+            I = self.affine_functions[5](I, arg[0], arg[1], arg[2])
+        else:
+            # compiling or except code
+            pass
+            
+        return I
     def apply_affine(self, I, code, args):
-        argc = self._affine_functions_argc[code]
-        # set nan to None
-        _args = args.astype(object)
-        _args[np.isnan(args)] = None
-        args = _args
-        
-        ret = []
-        for i in range(len(I)):
-            func = self.affine_functions[code[i]]
-            a = args[i][:argc[i]]
-            img = func(I[i:i+1], *a)
-            ret.append(img)
-        ret = tf.concat(ret, axis=0)
-        return ret
+        A_I = tf.map_fn(lambda e: self._standard_affine(e[0], e[1], e[2]), (I, code, args), dtype=I.dtype
+        return A_I
     
     def _pad(self, I, y1, y2, x1, x2, fill_mode=None):
         if fill_mode is None: fill_mode = self.fill_mode
             
-        pad = np.zeros((len(I.shape), 2), np.int32)
-
-        pad[[1, 1, 2, 2], [0, 1, 0, 1]] = [y1, y2, x1, x2]
-
+        pad = tf.stack([y1, y2, x1, x2, 0, 0])
+        pad = tf.reshape(pad, (3, 2))
+                        
         if fill_mode=="nearest":
             if y1>0:
-                row = I[:, :1]
-                row = tf.repeat(row, pad[1,0], axis=1)
-                I = tf.concat([row, I], axis=1)
+                row = I[:1]
+                row = tf.repeat(row, pad[0,0], axis=0)
+                I = tf.concat([row, I], axis=0)
             if y2>0:
-                row = I[:, -1:]
-                row = tf.repeat(row, pad[1,1], axis=1)
-                I = tf.concat([I, row], axis=1)
+                row = I[-1:]
+                row = tf.repeat(row, pad[0,1], axis=0)
+                I = tf.concat([I, row], axis=0)
             if x1>0:
-                col = I[:, :, :1]
-                col = tf.repeat(col, pad[2,0], axis=2)
-                I = tf.concat([col, I], axis=2)
+                col = I[:, :1]
+                col = tf.repeat(col, pad[1,0], axis=1)
+                I = tf.concat([col, I], axis=1)
             if x2<0:
-                col = I[:, :, -1:]
-                col = tf.repeat(col, pad[2,1], axis=2)
-                I = tf.concat([I, col], axis=2)
+                col = I[:, -1:]
+                col = tf.repeat(col, pad[1,1], axis=1)
+                I = tf.concat([I, col], axis=1)
         else:
             I = tf.pad(I, pad, mode=fill_mode)
         return I
     
     def translation(self, I, y, x, fill_mode=None):
         if fill_mode is None: fill_mode = self.fill_mode
-            
-        H, W = I.shape[1], I.shape[2]
-
+        H, W = I.shape[0], I.shape[1]
+                        
         if x>-1 and x<1:
-            x = int(W*x)
+            x = W*x
         if y>-1 and y<1:
-            y = int(H*y)
+            y = H*y
         
-        y1, y2, x1, x2 = max(-y, 0), min(H-y, H), max(-x, 0), min(W-x, W)
-        cropped = I[:, y1:y2, x1:x2]
+        x = tf.cast(x, tf.int64)
+        y = tf.cast(y, tf.int64)
         
-        return self._pad(cropped, H-y2, y1, W-x2, x1, fill_mode)
+        lower = tf.reshape(tf.stack([-y, 0, -x, 0]), (2, 2))
+        upper = tf.reshape(tf.stack([H-y, H, W-x, W]), (2, 2))
+        lower = tf.reduce_max(lower, axis=1)
+        upper = tf.reduce_min(upper, axis=1)
+        
+        cropped = I[lower[0]:upper[0], lower[1]:upper[1]]
+        
+        return self._pad(cropped, H-upper[0], lower[0], W-upper[1], lower[1], fill_mode)
 
     def shear(self, I, s_y=0, s_x=0, scale=1, fill_mode=None):
         if fill_mode is None: fill_mode = self.fill_mode
-            
-        A = scale*tf.constant([
-            [1, s_y],
-            [s_x, 1]
-        ], dtype=tf.float32)
+        A = scale*tf.stack([1, s_y, s_x, 1], axis=0)
+        A = tf.reshape(A, (2, 2))
+        
         h, w = I.shape[1], I.shape[2]
-        C = tf.constant([[h/2], [w/2]], dtype=tf.float32)
+        C = tf.constant([[h/2], [w/2]], dtype=I.dtype)
         d = C - A @ C
 
         I = tfa.image.transform(I, [scale, scale*s_x, d[1, 0],
@@ -159,11 +188,11 @@ class Affine:
 
     def flip(self, I, vertical=True, horizontal=True):
         if vertical and horizontal:
-            I = I[:, ::-1, ::-1]
+            I = I[::-1, ::-1]
         elif vertical:
-            I = I[:, ::-1]
+            I = I[::-1]
         elif horizontal:
-            I = I[:, :, ::-1]
+            I = I[:, ::-1]
         return I
 
     def rescale(self, I, height=None, width=None, y=None, x=None, scale=1, fill_mode=None):
@@ -171,10 +200,11 @@ class Affine:
             return self.rescale_zoomin(I, height=height, width=width, y=y, x=x, scale=scale)
         else:
             return self.rescale_zoomout(I, height=height, width=width, y=y, x=x, scale=scale, fill_mode=fill_mode)
+                        
     def rescale_zoomout(self, I, height=None, width=None, y=None, x=None, scale=1, fill_mode=None):
         if fill_mode is None: fill_mode = self.fill_mode
-            
-        h, w = I.shape[1], I.shape[2]
+        h, w = tf.cast(I.shape[0], I.dtype), tf.cast(I.shape[1], I.dtype)
+        
         if height is None:
             height = h
         if width is None:
@@ -183,23 +213,30 @@ class Affine:
         ratio = height / width
         if ratio > r:
             height = h
-            width = int(1/ratio*h)
+            width = 1/ratio*h
 
         elif ratio < r:
             width = w
-            height = int(ratio*w)
+            height = ratio*w
         
-        height = int(scale*height)
-        width = int(scale*width)
+        height = scale*height
+        width = scale*width
         
         if y is None:
-            y = (h - height) // 2
+            y = (h - height) / 2
         elif y>0 and y<1:
-            y = int((h - height)*y)
+            y = (h - height)*y
         if x is None:
-            x = (w - width) // 2
+            x = (w - width) / 2
         elif x>0 and x<1:
-            x = int((w - width)*x)
+            x = (w - width)*x
+        
+        height = tf.cast(height, tf.int64)
+        width = tf.cast(width, tf.int64)
+        h = tf.cast(h, tf.int64)
+        w = tf.cast(w, tf.int64)
+        y = tf.cast(y, tf.int64)
+        x = tf.cast(x, tf.int64)
         
         I = tf.image.resize(I, (height, width))
         
@@ -207,7 +244,7 @@ class Affine:
         return I
         
     def rescale_zoomin(self, I, height=None, width=None, y=None, x=None, scale=1):
-        h, w = I.shape[1], I.shape[2]
+        h, w = tf.cast(I.shape[0], I.dtype), tf.cast(I.shape[1], I.dtype)
         if height is None:
             height = h
         if width is None:
@@ -217,37 +254,43 @@ class Affine:
         ratio = height / width
         if ratio > r:
             width = w
-            height = int(ratio*w)
+            height = ratio*w
 
         elif ratio < r:
             height = h
-            width = int(1/ratio*h)
+            width = 1/ratio*h
         
-        height = int(scale*height)
-        width = int(scale*width)
+        height = scale*height
+        width = scale*width
         if y is None:
-            y = (height - h) // 2
+            y = (height - h) / 2
         elif y>0 and y<1:
-            y = int((height-h)*y)
+            y = (height-h)*y
         if x is None:
-            x = (width - w) // 2
+            x = (width - w) / 2
         elif x>0 and x<1:
-            x = int((width-w)*x)
+            x = (width-w)*x
+        
+        height = tf.cast(height, tf.int64)
+        width = tf.cast(width, tf.int64)
+        h = tf.cast(h, tf.int64)
+        w = tf.cast(w, tf.int64)
+        y = tf.cast(y, tf.int64)
+        x = tf.cast(x, tf.int64)
         
         I = tf.image.resize(I, (height, width))
-        I = I[:, y:y+h, x:x+w]
+        I = I[y:y+h, x:x+w]
         return I
 
     def rotate(self, I, theta, fill_mode=None):
         if fill_mode is None: fill_mode = self.fill_mode
         
-        c, s = np.cos(theta), np.sin(theta)
-        A = tf.constant([
-            [c, s],
-            [-s, c]
-        ], dtype=tf.float32)
-        h, w = I.shape[1], I.shape[2]
-        C = tf.constant([[h/2], [w/2]], dtype=tf.float32)
+        c, s = tf.cos(theta), tf.sin(theta)
+        A = tf.stack([c, s, -s, c], axis=0)
+        A = tf.reshape(A, (2, 2))
+        
+        h, w = I.shape[0], I.shape[1]
+        C = tf.constant([[h/2], [w/2]], dtype=I.dtype)
         d = C - A @ C
 
         I = tfa.image.transform(I, [c, -s, d[1, 0],

@@ -2,7 +2,7 @@
 import numpy as np
 import tensorflow as tf
 
-def nonlocal_operation(x, g=None, use_gaussian=True, use_relu=False, embed1=None, embed2=None, 
+def nonlocal_neural_network(x, g=None, use_gaussian=True, use_relu=False, embed1=None, embed2=None, 
                        mode='spatial', epsilon=1e-6, name=""):
     '''https://openaccess.thecvf.com/content_cvpr_2018/papers/Wang_Non-Local_Neural_Networks_CVPR_2018_paper.pdf
         # Arguments:
