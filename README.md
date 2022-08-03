@@ -88,20 +88,22 @@ R_I = affine.apply_affine(I, code, inv_args) # inverse transformed image
 
 
 # References
-1. Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentaion
-
-https://openaccess.thecvf.com/content_CVPR_2020/papers/Wang_Self-Supervised_Equivariant_Attention_Mechanism_for_Weakly_Supervised_Semantic_Segmentation_CVPR_2020_paper.pdf  
-https://ieeexplore.ieee.org/abstract/document/9157474  
-https://arxiv.org/pdf/2004.04581.pdf  
-
-2. Non-local Neural Networks
-
+1. Non-local Neural Networks  
 https://openaccess.thecvf.com/content_cvpr_2018/papers/Wang_Non-Local_Neural_Networks_CVPR_2018_paper.pdf  
 https://arxiv.org/pdf/1711.07971.pdf  
 https://ieeexplore.ieee.org/document/8578911  
 
-3. The implementation of Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentaion.
+2. Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentaion  
+https://openaccess.thecvf.com/content_CVPR_2020/papers/Wang_Self-Supervised_Equivariant_Attention_Mechanism_for_Weakly_Supervised_Semantic_Segmentation_CVPR_2020_paper.pdf  
+https://ieeexplore.ieee.org/abstract/document/9157474  
+https://arxiv.org/pdf/2004.04581.pdf  
 
+3. The implementation of Self-supervised Equivariant Attention Mechanism for Weakly Supervised Semantic Segmentaion  
 https://github.com/YudeWang/SEAM
 
+4. Weakly Supervised Semantic Segmentation by Pixel-to-Prototype Contrast  
+https://arxiv.org/pdf/2110.07110.pdf  
+https://openaccess.thecvf.com/content/CVPR2022/papers/Du_Weakly_Supervised_Semantic_Segmentation_by_Pixel-to-Prototype_Contrast_CVPR_2022_paper.pdf  
 
+5. The Pytorch implementation of Weakly Supervised Semantic Segmentation by Pixel-to-Prototype Contrast  
+https://github.com/usr922/wseg
