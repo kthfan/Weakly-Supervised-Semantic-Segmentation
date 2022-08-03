@@ -119,8 +119,9 @@ class Affine:
             pass
             
         return I
+
     def apply_affine(self, I, code, args):
-        A_I = tf.map_fn(lambda e: self._standard_affine(e[0], e[1], e[2]), (I, code, args), dtype=I.dtype
+        A_I = tf.map_fn(lambda e: self._standard_affine(e[0], e[1], e[2]), (I, code, args), dtype=I.dtype)
         return A_I
     
     def _pad(self, I, y1, y2, x1, x2, fill_mode=None):
