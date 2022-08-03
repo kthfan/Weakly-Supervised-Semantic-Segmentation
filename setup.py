@@ -10,10 +10,10 @@ setup(
     author_email="3999932@gmail.com",
     url="https://github.com/kthfan/Weakly-Supervised-Semantic-Segmentation",
     packages=find_packages(
-        where='src',
+        where='wsss',
         include=['*'],
     ),
-    package_dir={"": "src"}
+    package_dir={"": "wsss"}
 )
 
 
