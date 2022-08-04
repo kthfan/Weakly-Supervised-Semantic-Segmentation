@@ -119,9 +119,10 @@ class Affine:
             pass
             
         return I
-
     def apply_affine(self, I, code, args):
+        original_shape = I.shape
         A_I = tf.map_fn(lambda e: self._standard_affine(e[0], e[1], e[2]), (I, code, args), dtype=I.dtype)
+        A_I.set_shape(original_shape) # ensure shape of images are the same after affine transformation.
         return A_I
     
     def _pad(self, I, y1, y2, x1, x2, fill_mode=None):

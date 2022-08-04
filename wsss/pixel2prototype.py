@@ -2,7 +2,6 @@ import numpy as np
 import tensorflow as tf
 from .seam import *
 
-
 class Pixel2Prototype(SEAM):
     '''
     Implementation of Weakly Supervised Semantic Segmentation by Pixel-to-Prototype Contrast
@@ -21,7 +20,8 @@ class Pixel2Prototype(SEAM):
         intra_contrast_coef: Coefficient of intra-view contrast loss.
         hard_prototype_range: Upper bound and lower bound of hard prototype percentage.
         hard_pixel_range:  Upper bound and lower bound of hard pixel percentage.
-        
+        background_threshold: In contrastive learning, pixel that max(cam) < background_threshold will be considered as background pixel.
+                              If None, persist original background score.
     # Usage:
         img_input = tf.keras.layers.Input((28, 28, 1))
         x = tf.keras.layers.Conv2D(64, 3, padding="same")(img_input)
@@ -36,7 +36,8 @@ class Pixel2Prototype(SEAM):
     '''
     def __init__(self, image_input, feature_output, classes, project_feature=None, correlation_feature=None,  
                  name="p2p", prototype_confidence_rate=1/8, nce_tau=0.1, cp_contrast_coef=0.1, cc_contrast_coef=0.1,
-                 intra_contrast_coef=0.1, hard_prototype_range=(0.1, 0.6), hard_pixel_range=(0.1, 0.6), **kwargs):
+                 intra_contrast_coef=0.1, background_threshold=0.2,
+                 hard_prototype_range=(0.1, 0.6), hard_pixel_range=(0.1, 0.6), **kwargs):
         super(Pixel2Prototype, self).__init__(image_input, feature_output, classes, name=name, **kwargs)
                         
         self.prototype_confidence_rate = prototype_confidence_rate
@@ -46,6 +47,7 @@ class Pixel2Prototype(SEAM):
         self.intra_contrast_coef = intra_contrast_coef
         self.hard_prototype_range = hard_prototype_range
         self.hard_pixel_range = hard_pixel_range
+        self.background_threshold = background_threshold
         
         if type(self) == Pixel2Prototype:
             outputs = self._cnn_head(feature_output, correlation_feature, project_feature, classes)
@@ -56,6 +58,11 @@ class Pixel2Prototype(SEAM):
             project_feature = tf.keras.layers.Conv2D(128, 1, use_bias=False)(feature_output)
             
         categorical_feature, cam_feature, refined_cam_feature, classify_output, classify_output_bg = super(Pixel2Prototype, self)._cnn_head(feature_output, correlation_feature, classes)
+        
+        # ensure height and width of project_feature and refined_cam_feature are equal
+        if refined_cam_feature.shape[1] != project_feature.shape[1] or refined_cam_feature.shape[2] != project_feature.shape[2]:
+            project_feature = tf.image.resize(project_feature, (refined_cam_feature.shape[1], refined_cam_feature.shape[2]))
+            
         return categorical_feature, cam_feature, refined_cam_feature, project_feature, classify_output, classify_output_bg
     
     def _build_models(self, image_input, feature_output, categorical_feature, 
@@ -177,81 +184,91 @@ class Pixel2Prototype(SEAM):
         # overall loss
         loss = (1 - hard_pixel_range[1] + hard_pixel_range[0])*random_pixel_loss + (hard_pixel_range[1] - hard_pixel_range[0])*hard_pixel_loss
         return loss
+    
+    def _loss(self, affine_code, affine_args, inv_affine_args, x, y, A_x, 
+              F_o, F_t, F_o_r, F_t_r, F_proj_o, F_proj_t, pred_y_o, pred_y_t):
+        
+        # features and losses from SEAM
+        features, losses = super(Pixel2Prototype, self)._loss(affine_code, affine_args, inv_affine_args, x, y, A_x, F_o, F_t, F_o_r, F_t_r, pred_y_o, pred_y_t)
             
+        pred_y_o, _, _, F_o, F_t, F_o_r, F_t_r, A_F_o, A_F_o_r, inv_A_F_t, inv_A_F_t_r = features
+        loss_cls, L_ER, L_ECR, loss_min = losses      
+        
+        # contrastive learning loss
+        ## set background score
+        cam_o, cam_t = F_o_r, F_t_r
+        A_cam_o, inv_A_cam_t = A_F_o_r, inv_A_F_t_r
+        if self.background_threshold is not None:
+            cam_o = tf.pad(F_o_r[:, :, :, :-1], [[0,0], [0,0], [0,0], [0, 1]], mode="CONSTANT", constant_values=self.background_threshold)
+            cam_t = tf.pad(F_t_r[:, :, :, :-1], [[0,0], [0,0], [0,0], [0, 1]], mode="CONSTANT", constant_values=self.background_threshold)
+            A_cam_o = tf.pad(A_F_o_r[:, :, :, :-1], [[0,0], [0,0], [0,0], [0, 1]], mode="CONSTANT", constant_values=self.background_threshold)
+            if self.use_inverse_affine:
+                inv_A_cam_t = tf.pad(inv_A_F_t_r[:, :, :, :-1], [[0,0], [0,0], [0,0], [0, 1]], mode="CONSTANT", constant_values=self.background_threshold)
+        
+        ## normalized projection feature
+        F_proj_o = tf.linalg.normalize(F_proj_o, axis=-1)[0]
+        F_proj_t = tf.linalg.normalize(F_proj_t, axis=-1)[0]
+        ### Apply affine in project_feature F_proj_o and F_proj_t
+        A_F_proj_o = self._affine(F_proj_o, affine_code, affine_args)
+        inv_A_F_proj_t = self._affine(F_proj_t, affine_code, inv_affine_args) if self.use_inverse_affine else None
+        
+        ## pseudo pixel-level label
+        pseudo_label_o = tf.argmax(cam_o, axis=-1) # (batch_size, h, w)
+        pseudo_label_t = tf.argmax(cam_t, axis=-1) # (batch_size, h, w)
+        A_pseudo_label_o = tf.argmax(A_cam_o, axis=-1) # (batch_size, h, w)
+        inv_A_pseudo_label_t = tf.argmax(inv_A_cam_t, axis=-1) if self.use_inverse_affine else None
+        
+        ## prototype
+        prototype_o = self._get_prototype(cam_o, F_proj_o, self.prototype_confidence_rate) # (n_class, n_channel)
+        prototype_t = self._get_prototype(cam_t, F_proj_t, self.prototype_confidence_rate) # (n_class, n_channel)
+        A_prototype_o = self._get_prototype(A_cam_o, A_F_proj_o, self.prototype_confidence_rate) # (n_class, n_channel)
+        inv_A_prototype_t = self._get_prototype(inv_A_cam_t, inv_A_F_proj_t, self.prototype_confidence_rate) if self.use_inverse_affine else None # (n_class, n_channel)
+        
+        ## stop_gradient on pseudo pixel-level label and prototype
+        pseudo_label_o, pseudo_label_t = tf.stop_gradient(pseudo_label_o), tf.stop_gradient(pseudo_label_t)
+        A_pseudo_label_o, inv_A_pseudo_label_t = tf.stop_gradient(A_pseudo_label_o), tf.stop_gradient(inv_A_pseudo_label_t) if self.use_inverse_affine else None
+        prototype_o, prototype_t = tf.stop_gradient(prototype_o), tf.stop_gradient(prototype_t)
+        A_prototype_o, inv_A_prototype_t = tf.stop_gradient(A_prototype_o), tf.stop_gradient(inv_A_prototype_t) if self.use_inverse_affine else None
+            
+        ## flatten (batch_size, h, w) into (batch_size*h*w)
+        F_proj_o = tf.reshape(F_proj_o, (-1, F_proj_o.shape[-1]))
+        F_proj_t = tf.reshape(F_proj_t, (-1, F_proj_t.shape[-1]))
+        A_F_proj_o = tf.reshape(A_F_proj_o, (-1, A_F_proj_o.shape[-1]))
+        inv_A_F_proj_t = tf.reshape(inv_A_F_proj_t, (-1, inv_A_F_proj_t.shape[-1])) if self.use_inverse_affine else None
+        pseudo_label_o = tf.reshape(pseudo_label_o, [-1])
+        pseudo_label_t = tf.reshape(pseudo_label_t, [-1])
+        A_pseudo_label_o = tf.reshape(A_pseudo_label_o, [-1])
+        inv_A_pseudo_label_t = tf.reshape(inv_A_pseudo_label_t, [-1]) if self.use_inverse_affine else None
+            
+        ## compute contrastive loss
+        L_cp = 0.5*(self._nce_loss(A_F_proj_o, A_pseudo_label_o, prototype_t) + self._nce_loss(F_proj_t, pseudo_label_t, A_prototype_o))
+        L_cc = 0.5*(self._nce_loss(A_F_proj_o, pseudo_label_t, A_prototype_o) + self._nce_loss(F_proj_t, A_pseudo_label_o, prototype_t))
+        if self.use_inverse_affine:
+            L_cp += 0.5*(self._nce_loss(F_proj_o, pseudo_label_o, inv_A_prototype_t) + self._nce_loss(inv_A_F_proj_t, inv_A_pseudo_label_t, prototype_o))
+            L_cc += 0.5*(self._nce_loss(F_proj_o, inv_A_pseudo_label_t, prototype_o) + self._nce_loss(inv_A_F_proj_t, pseudo_label_o, inv_A_prototype_t))
+            L_cp, L_cc = 0.5*L_cp, 0.5*L_cc
+        L_cp, L_cc = self.cp_contrast_coef*tf.reduce_mean(L_cp), self.cc_contrast_coef*tf.reduce_mean(L_cc)
+            
+        
+        L_intra = 0.5*(self._nce_loss_hard_mining(F_proj_o, pseudo_label_o, prototype_o) + self._nce_loss_hard_mining(F_proj_t, pseudo_label_t, prototype_t))
+        L_intra = self.intra_contrast_coef*L_intra # already scalar
+            
+        return (features + (F_proj_o, F_proj_t, A_F_proj_o, inv_A_F_proj_t, prototype_o, prototype_t, A_prototype_o, inv_A_prototype_t), 
+                losses + (L_cp, L_cc, L_intra))
+    
     def call(self, x, y=None, training=False):
         if training and y is not None:
+            # apply affine
             affine_code, affine_args, inv_affine_args = self._ranomd_affine_code(tf.shape(x)[0])
             A_x = self._affine(x, affine_code, affine_args)
-            
+
+            # get features from simsiam model
             _, F_o, _, F_o_r, F_proj_o, pred_y_o, _ = self.model(x, training=True)
             _, F_t, _, F_t_r, F_proj_t, pred_y_t, _ = self.model(A_x, training=True)
             
-            # only objects exist are important. (note that background always appear)
-            y_bg = tf.pad(y, [[0,0],[0,1]], mode='CONSTANT', constant_values=1)
-            y_bg = tf.keras.layers.Reshape((1, 1, -1))(y_bg)
-            F_o, F_t, F_o_r, F_t_r = F_o*y_bg, F_t*y_bg, F_o_r*y_bg, F_t_r*y_bg
-            
-            # min pooling loss
-            loss_min = 0
-            if self.min_pooling_rate!=0:
-                loss_min_o = self._min_pooling_loss(F_o_r)
-                loss_min_t = self._min_pooling_loss(F_t_r)
-                loss_min_o, loss_min_t = tf.reduce_mean(loss_min_o), tf.reduce_mean(loss_min_t)
-                loss_min = 0.5*(loss_min_o + loss_min_t)
-            
-            # Note that refined cam is not normalized
-            # F_o_r, F_t_r = self._max_norm(F_o_r, False), self._max_norm(F_t_r, False)
-            
-            # spatial equivalent regularization
-            A_F_o = self._affine(F_o, affine_code, affine_args)
-            A_F_o_r = self._affine(F_o_r, affine_code, affine_args)
-            
-            L_ER = tf.abs(A_F_o - F_t)
-            L_ECR = tf.abs(A_F_o_r - F_t) + tf.abs(A_F_o - F_t_r)
-            
-            if self.use_inverse_affine:
-                inv_A_F_t = self._affine(F_t, affine_code, inv_affine_args)
-                inv_A_F_t_r = self._affine(F_t_r, affine_code, inv_affine_args)
-                
-                L_ER += tf.abs(F_o - inv_A_F_t)
-                L_ECR += tf.abs(F_o_r - inv_A_F_t) + tf.abs(F_o - inv_A_F_t_r)
-                                                            
-                L_ER, L_ECR = 0.5*L_ER, 0.5*L_ECR
-            
-            L_ER, L_ECR = tf.reduce_mean(L_ER, axis=(0,1,2,3)), tf.reduce_mean(L_ECR, axis=(0,1,2,3))
-            L_ER, L_ECR = self.ER_reg_coef*L_ER, self.ECR_reg_coef*L_ECR
-            
-            # contrastive learning loss
-            F_proj_o = tf.linalg.normalize(F_proj_o, axis=-1)[0]
-            F_proj_t = tf.linalg.normalize(F_proj_t, axis=-1)[0]
-            pseudo_label_o = tf.argmax(F_o_r, axis=-1) # (batch_size, h, w)
-            pseudo_label_t = tf.argmax(F_t_r, axis=-1) # (batch_size, h, w)
-            prototype_o = self._get_prototype(F_o_r, F_proj_o, self.prototype_confidence_rate) # (n_class, n_channel)
-            prototype_t = self._get_prototype(F_t_r, F_proj_t, self.prototype_confidence_rate) # (n_class, n_channel)
-            
-            pseudo_label_o, pseudo_label_t = tf.stop_gradient(pseudo_label_o), tf.stop_gradient(pseudo_label_t)
-            prototype_o, prototype_t = tf.stop_gradient(prototype_o), tf.stop_gradient(prototype_t)
-            
-            ## flatten (batch_size, h, w)
-            F_proj_o = tf.reshape(F_proj_o, (-1, F_proj_o.shape[-1]))
-            F_proj_t = tf.reshape(F_proj_t, (-1, F_proj_o.shape[-1]))
-            pseudo_label_o = tf.reshape(pseudo_label_o, [-1])
-            pseudo_label_t = tf.reshape(pseudo_label_t, [-1])
-            
-            L_cp = 0.5*(self._nce_loss(F_proj_o, pseudo_label_o, prototype_t) + self._nce_loss(F_proj_t, pseudo_label_t, prototype_o))
-            L_cc = 0.5*(self._nce_loss(F_proj_o, pseudo_label_t, prototype_o) + self._nce_loss(F_proj_t, pseudo_label_o, prototype_t))
-            L_cp, L_cc = self.cp_contrast_coef*tf.reduce_mean(L_cp), self.cc_contrast_coef*tf.reduce_mean(L_cc)
-            
-            
-            L_intra = 0.5*(self._nce_loss_hard_mining(F_proj_o, pseudo_label_o, prototype_o) + self._nce_loss_hard_mining(F_proj_t, pseudo_label_t, prototype_t))
-            L_intra = self.intra_contrast_coef*L_intra # already scalar
-            
-            # classification loss
-            loss_cls_o = self.compiled_loss(y, pred_y_o, regularization_losses=None)
-            loss_cls_t = self.compiled_loss(y, pred_y_t, regularization_losses=None)
-            loss_cls = 0.5*(loss_cls_o + loss_cls_t)
-            
-            loss = loss_cls + L_ER + L_ECR + loss_min + L_cp + L_cc + L_intra
+            # compute losses
+            features, losses = self._loss(affine_code, affine_args, inv_affine_args, x, y, A_x, F_o, F_t, F_o_r, F_t_r, F_proj_o, F_proj_t, pred_y_o, pred_y_t)
+            loss_cls, L_ER, L_ECR, loss_min, L_cp, L_cc, L_intra = losses   
             
             self.add_loss(L_ER)
             self.add_loss(L_ECR)
@@ -260,6 +277,7 @@ class Pixel2Prototype(SEAM):
             self.add_loss(L_cc)
             self.add_loss(L_intra)
             
+            L_all = sum(losses)
             self.add_metric(L_ER, name='L_ER')
             self.add_metric(L_ECR, name='L_ECR')
             self.add_metric(loss_min, name='L_min')
@@ -267,8 +285,9 @@ class Pixel2Prototype(SEAM):
             self.add_metric(L_cp, name='L_cp')
             self.add_metric(L_cc, name='L_cc')
             self.add_metric(L_intra, name='L_intra')
-            self.add_metric(loss, name='L_all')
+            self.add_metric(L_all, name='L_all')
             
+            pred_y_o = features[0]
             return pred_y_o
             
         else:

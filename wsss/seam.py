@@ -143,67 +143,81 @@ class SEAM(tf.keras.models.Model):
         y = tf.nn.relu(y)
         return tf.reduce_sum(y, axis=-1) / k
     
+    def _loss(self, affine_code, affine_args, inv_affine_args, x, y, A_x, 
+              F_o, F_t, F_o_r, F_t_r, pred_y_o, pred_y_t):
+            
+        # only objects exist are important. (note that background always appear)
+        y_bg = tf.pad(y, [[0,0],[0,1]], mode='CONSTANT', constant_values=1)
+        y_bg = tf.keras.layers.Reshape((1, 1, -1))(y_bg)
+        F_o, F_t, F_o_r, F_t_r = F_o*y_bg, F_t*y_bg, F_o_r*y_bg, F_t_r*y_bg
+            
+        # min pooling loss
+        loss_min = 0
+        if self.min_pooling_rate!=0:
+            loss_min_o = self._min_pooling_loss(F_o_r)
+            loss_min_t = self._min_pooling_loss(F_t_r)
+            loss_min_o, loss_min_t = tf.reduce_mean(loss_min_o), tf.reduce_mean(loss_min_t)
+            loss_min = 0.5*(loss_min_o + loss_min_t)
+            
+        # Note that refined cam is not normalized
+        # F_o_r, F_t_r = self._max_norm(F_o_r, False), self._max_norm(F_t_r, False)
+            
+        # spatial equivalent regularization
+        A_F_o = self._affine(F_o, affine_code, affine_args)
+        A_F_o_r = self._affine(F_o_r, affine_code, affine_args)
+            
+        L_ER = tf.abs(A_F_o - F_t)
+        L_ECR = tf.abs(A_F_o_r - F_t) + tf.abs(A_F_o - F_t_r)
+            
+        inv_A_F_t, inv_A_F_t_r = None, None
+        if self.use_inverse_affine:
+            inv_A_F_t = self._affine(F_t, affine_code, inv_affine_args)
+            inv_A_F_t_r = self._affine(F_t_r, affine_code, inv_affine_args)
+                
+            L_ER += tf.abs(F_o - inv_A_F_t)
+            L_ECR += tf.abs(F_o_r - inv_A_F_t) + tf.abs(F_o - inv_A_F_t_r)
+                                                            
+            L_ER, L_ECR = 0.5*L_ER, 0.5*L_ECR
+            
+        L_ER, L_ECR = tf.reduce_mean(L_ER, axis=(0,1,2,3)), tf.reduce_mean(L_ECR, axis=(0,1,2,3))
+        L_ER, L_ECR = self.ER_reg_coef*L_ER, self.ECR_reg_coef*L_ECR
+            
+        # classification loss
+        loss_cls_o = self.compiled_loss(y, pred_y_o, regularization_losses=None)
+        loss_cls_t = self.compiled_loss(y, pred_y_t, regularization_losses=None)
+        loss_cls = 0.5*(loss_cls_o + loss_cls_t)
+           
+        return ((pred_y_o, pred_y_t, y_bg, F_o, F_t, F_o_r, F_t_r, A_F_o, A_F_o_r, inv_A_F_t, inv_A_F_t_r),
+                (loss_cls, L_ER, L_ECR, loss_min))
+            
     def call(self, x, y=None, training=False):
         if training and y is not None:
+            # apply affine
             affine_code, affine_args, inv_affine_args = self._ranomd_affine_code(tf.shape(x)[0])
             A_x = self._affine(x, affine_code, affine_args)
             
+            # get features from simsiam model
             _, F_o, _, F_o_r, pred_y_o, _ = self.model(x, training=True)
             _, F_t, _, F_t_r, pred_y_t, _ = self.model(A_x, training=True)
+        
+            # compute losses
+            features, losses = self._loss(affine_code, affine_args, inv_affine_args, x, y, A_x, F_o, F_t, F_o_r, F_t_r, pred_y_o, pred_y_t)
             
-            # only objects exist are important. (note that background always appear)
-            y_bg = tf.pad(y, [[0,0],[0,1]], mode='CONSTANT', constant_values=1)
-            y_bg = tf.keras.layers.Reshape((1, 1, -1))(y_bg)
-            F_o, F_t, F_o_r, F_t_r = F_o*y_bg, F_t*y_bg, F_o_r*y_bg, F_t_r*y_bg
-            
-            # min pooling loss
-            loss_min = 0
-            if self.min_pooling_rate!=0:
-                loss_min_o = self._min_pooling_loss(F_o_r)
-                loss_min_t = self._min_pooling_loss(F_t_r)
-                loss_min_o, loss_min_t = tf.reduce_mean(loss_min_o), tf.reduce_mean(loss_min_t)
-                loss_min = 0.5*(loss_min_o + loss_min_t)
-            
-            # Note that refined cam is not normalized
-            # F_o_r, F_t_r = self._max_norm(F_o_r, False), self._max_norm(F_t_r, False)
-            
-            # spatial equivalent regularization
-            A_F_o = self._affine(F_o, affine_code, affine_args)
-            A_F_o_r = self._affine(F_o_r, affine_code, affine_args)
-            
-            L_ER = tf.abs(A_F_o - F_t)
-            L_ECR = tf.abs(A_F_o_r - F_t) + tf.abs(A_F_o - F_t_r)
-            
-            if self.use_inverse_affine:
-                inv_A_F_t = self._affine(F_t, affine_code, inv_affine_args)
-                inv_A_F_t_r = self._affine(F_t_r, affine_code, inv_affine_args)
-                
-                L_ER += tf.abs(F_o - inv_A_F_t)
-                L_ECR += tf.abs(F_o_r - inv_A_F_t) + tf.abs(F_o - inv_A_F_t_r)
-                                                            
-                L_ER, L_ECR = 0.5*L_ER, 0.5*L_ECR
-            
-            L_ER, L_ECR = tf.reduce_mean(L_ER, axis=(0,1,2,3)), tf.reduce_mean(L_ECR, axis=(0,1,2,3))
-            L_ER, L_ECR = self.ER_reg_coef*L_ER, self.ECR_reg_coef*L_ECR
-            
-            # classification loss
-            loss_cls_o = self.compiled_loss(y, pred_y_o, regularization_losses=None)
-            loss_cls_t = self.compiled_loss(y, pred_y_t, regularization_losses=None)
-            loss_cls = 0.5*(loss_cls_o + loss_cls_t)
-            
-            loss = loss_cls + L_ER + L_ECR + loss_min
+            loss_cls, L_ER, L_ECR, loss_min = losses
             
             self.add_loss(L_ER)
             self.add_loss(L_ECR)
             self.add_loss(loss_min)
             self.add_loss(loss_cls)
             
+            L_all = sum(losses)
             self.add_metric(L_ER, name='L_ER')
             self.add_metric(L_ECR, name='L_ECR')
             self.add_metric(loss_min, name='L_min')
             self.add_metric(loss_cls, name='L_cls')
-            self.add_metric(loss, name='L_all')
+            self.add_metric(L_all, name='L_all')
             
+            pred_y_o = features[0]
             return pred_y_o
             
         else:
