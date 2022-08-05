@@ -14,9 +14,10 @@ class SEAM(tf.keras.models.Model):
     # Arguments:
         image_input: The image input(s) of the model: a keras.Input object or list of keras.Input objects. 
         feature_output: The output feature of the CNN. 
-        correlation_feature: Feature map for building the correlation matrix, see nonlocal neural networks.
-        fill_mode: Fill mode of affine transformations.
         classes: Number of categories in classification task.
+        correlation_feature: Feature map for building the correlation matrix, see nonlocal neural networks.
+        classification_activation: Activation function on classification output. Default is set to 'sigmoid'.
+        fill_mode: Fill mode of affine transformations.
         ER_reg_coef: Regularization coefficient of ER loss.
         ECR_reg_coef: Regularization coefficient of ECR loss.
         epsilon: Small float added to variance to avoid dividing by zero.
@@ -45,8 +46,8 @@ class SEAM(tf.keras.models.Model):
         
     '''
     def __init__(self, image_input, feature_output, classes, correlation_feature=None,
-                  name="seam", fill_mode='constant', ER_reg_coef=1, ECR_reg_coef=1, epsilon=1e-6,
-                 use_inverse_affine=True, min_pooling_rate=1/4,
+                  classification_activation="sigmoid", fill_mode='constant', ER_reg_coef=1, ECR_reg_coef=1, epsilon=1e-6,
+                 use_inverse_affine=True, min_pooling_rate=1/4, name="seam", 
                 affine_rotate=0, affine_rescale=0.5, affine_flip=0.5, affine_translation=0, **kwargs):
         super(SEAM, self).__init__(name=name, **kwargs)
         
@@ -57,6 +58,7 @@ class SEAM(tf.keras.models.Model):
         self.ECR_reg_coef = ECR_reg_coef
         self.use_inverse_affine = use_inverse_affine
         self.min_pooling_rate = min_pooling_rate
+        self.classification_activation = classification_activation
         self.epsilon = epsilon
         
         if type(self) == SEAM:
@@ -93,8 +95,8 @@ class SEAM(tf.keras.models.Model):
         # classification
         classify_logit = tf.keras.layers.AveragePooling2D(categorical_feature.shape[1:3])(categorical_feature)
         classify_logit = tf.keras.layers.Flatten()(classify_logit)
-        classify_output = tf.keras.layers.Activation("softmax" if classes>1 else 'sigmoid')(classify_logit[:, :-1])
-        classify_output_bg = tf.keras.layers.Activation("softmax")(classify_logit) # include background
+        classify_output = tf.keras.layers.Activation('sigmoid 'if self.classification_activation=="softmax" and self.classes==1 else self.classification_activation)(classify_logit[:, :-1])
+        classify_output_bg = tf.keras.layers.Activation(self.classification_activation)(classify_logit) # include background
         
         return categorical_feature, cam_feature, refined_cam_feature, classify_output, classify_output_bg
     
