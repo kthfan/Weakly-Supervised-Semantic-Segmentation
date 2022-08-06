@@ -95,7 +95,7 @@ class SEAM(tf.keras.models.Model):
         # classification
         classify_logit = tf.keras.layers.AveragePooling2D(categorical_feature.shape[1:3])(categorical_feature)
         classify_logit = tf.keras.layers.Flatten()(classify_logit)
-        classify_output = tf.keras.layers.Activation('sigmoid 'if self.classification_activation=="softmax" and self.classes==1 else self.classification_activation)(classify_logit[:, :-1])
+        classify_output = tf.keras.layers.Activation('sigmoid 'if self.classification_activation=="softmax" and classes==1 else self.classification_activation)(classify_logit[:, :-1])
         classify_output_bg = tf.keras.layers.Activation(self.classification_activation)(classify_logit) # include background
         
         return categorical_feature, cam_feature, refined_cam_feature, classify_output, classify_output_bg

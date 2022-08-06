@@ -36,18 +36,22 @@ class Affine:
         r_flip = lambda I,v,h: self.flip(I, v>0.5, h>0.5)
         r_rescale = lambda I,r,_,y,x,s: self.rescale(I, r, 1., y, x, s)
         self.affine_functions = [self.rotate, r_rescale, self.rescale, r_flip, self.translation, self.shear]
-        
-        if affine_weights is None:
-            affine_weights = tf.ones(len(self.affine_functions), dtype=tf.float32)
-        affine_weights = tf.constant(affine_weights, dtype=tf.float32)
-        affine_weights /= tf.reduce_sum(affine_weights)
-        self.affine_weights = affine_weights 
         self.fill_mode = fill_mode
         self.epsilon = epsilon
         
-        self._affine_weights_upper = tf.cumsum(self.affine_weights) 
-        self._affine_weights_lower = tf.concat([tf.zeros(1, dtype=self.affine_weights.dtype), self._affine_weights_upper[:-1]], axis=0) 
-        self._affine_weights_upper = self._affine_weights_upper + self.epsilon
+        if affine_weights is None:
+            affine_weights = tf.ones(len(self.affine_functions), dtype=tf.float32)
+        affine_weights /= np.sum(affine_weights)
+    
+        self._affine_weights_upper = np.cumsum(affine_weights) 
+        self._affine_weights_lower = np.concatenate([np.zeros(1, dtype=affine_weights.dtype), self._affine_weights_upper[:-1]], axis=0) 
+        self._affine_weights_upper = self._affine_weights_upper
+        self._affine_weights_upper[self._affine_weights_upper==0] -= self.epsilon
+        self._affine_weights_lower[self._affine_weights_lower==0] -= self.epsilon
+        self._affine_weights_upper[self._affine_weights_upper==1] += self.epsilon
+        self._affine_weights_lower[self._affine_weights_lower==1] += self.epsilon
+        self._affine_weights_upper = tf.constant(self._affine_weights_upper, dtype=tf.float32)
+        self._affine_weights_lower = tf.constant(self._affine_weights_lower, dtype=tf.float32)
         
         self._args_inverse = [
             lambda a: -a,
