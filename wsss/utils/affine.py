@@ -4,6 +4,7 @@ import tensorflow as tf
 import tensorflow_addons as tfa 
 
 
+
 class Affine:
     '''
     Supported affine transformations: rotate, rescale(both height and width), resize, flip, translation, shear.
@@ -12,6 +13,7 @@ class Affine:
                         of affine transformations.
         fill_mode:      Points outside the boundaries of the input are filled according to the given mode 
                         (one of {'constant', 'nearest', 'reflect', 'wrap'}). 
+        epsilon:        Small float added to variance to avoid dividing by zero. 
         *_domain:       Domain of affine transformations arguments, i.e., domain of rotate angle.
         
     # Usage:
@@ -25,7 +27,7 @@ class Affine:
         A_I = affine.apply_affine(I, code, args)     # transformed image
         R_I = affine.apply_affine(I, code, inv_args) # inverse transformed image
     '''
-    def __init__(self, affine_weights=None, fill_mode='nearest', 
+    def __init__(self, affine_weights=None, fill_mode='nearest', epsilon=1e-6,
                  rotate_domain=(-np.pi/2, np.pi/2), rescale_ratio_domain=(0.5, 2),rescale_scale_domain=(1, 2),
                  rescale_x_domain=(0, 1), rescale_y_domain=(0, 1),
                  translation_x_domain=(-0.5, 0.5), translation_y_domain=(-0.5, 0.5),
@@ -41,9 +43,11 @@ class Affine:
         affine_weights /= tf.reduce_sum(affine_weights)
         self.affine_weights = affine_weights 
         self.fill_mode = fill_mode
+        self.epsilon = epsilon
         
         self._affine_weights_upper = tf.cumsum(self.affine_weights) 
         self._affine_weights_lower = tf.concat([tf.zeros(1, dtype=self.affine_weights.dtype), self._affine_weights_upper[:-1]], axis=0) 
+        self._affine_weights_upper = self._affine_weights_upper + self.epsilon
         
         self._args_inverse = [
             lambda a: -a,
@@ -93,7 +97,7 @@ class Affine:
     
     def random_affine_code(self, size):
         code = tf.expand_dims(tf.random.uniform([size]), -1)
-        code = tf.where((self._affine_weights_lower<=code) & (code<=self._affine_weights_upper))[:, 1]
+        code = tf.where((self._affine_weights_lower<=code) & (code<self._affine_weights_upper))[:, 1]
         
         args = tf.random.uniform((size, self._args_min.shape[1]))
         a_o = tf.gather(self._args_min, code, axis=0)
