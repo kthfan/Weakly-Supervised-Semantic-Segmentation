@@ -248,14 +248,45 @@ class SEAM(tf.keras.models.Model):
     def predict_step(self, data):
         return self.model.predict_step(data)
 
+    def get_config(self):
+        
+        return {"name": self.name,
+                "classes": self.model.outputs[4].shape[-1],
+                "classification_activation": self.classification_activation,
+                "fill_mode": self.affiner.fill_mode,
+                "ER_reg_coef": self.ER_reg_coef,
+                "ECR_reg_coef": self.ECR_reg_coef,
+                "epsilon": self.epsilon,
+                "use_inverse_affine": self.use_inverse_affine,
+                "min_pooling_rate": self.min_pooling_rate,
+                "affine_rotate": self.affine_weights[0],
+                "affine_rescale": self.affine_weights[2],
+                "affine_flip": self.affine_weights[3],
+                "affine_translation": self.affine_weights[4],
+                "model": self.model.get_config()
+               }
+    
     def save(self, filepath, **kwds):
         return self.model.save(filepath, **kwds)
     
     @staticmethod
-    def load(filepath, **kwds):
+    def from_config(config):
+        model = tf.keras.models.Model.from_config(config.pop("model"))
+        image_input = model.inputs[0]
+        feature_output, categorical_feature, cam_feature, refined_cam_feature, classify_output, classify_output_bg = model.outputs
+        seam = SEAM(image_input, feature_output, **config)
+        seam._build_models(image_input, feature_output, categorical_feature, 
+                      cam_feature, refined_cam_feature, classify_output, classify_output_bg)
+        return seam
+    
+    @staticmethod
+    def load_model(filepath, **kwds):
         model = tf.keras.models.load_model(filepath)
-        seam = SEAM(model.inputs[0], model.outputs[0], model.outputs[2], **kwds)
-        seam.model = model
+        image_input = model.inputs[0]
+        feature_output, categorical_feature, cam_feature, refined_cam_feature, classify_output, classify_output_bg = model.outputs
+        seam = SEAM(image_input, feature_output, **kwds)
+        seam._build_models(image_input, feature_output, categorical_feature, 
+                      cam_feature, refined_cam_feature, classify_output, classify_output_bg)
         return seam
     
     def _ranomd_affine_code(self, size):
@@ -268,4 +299,5 @@ class SEAM(tf.keras.models.Model):
         A_I = self.affiner.apply_affine(I, code, args)
         A_I = tf.stop_gradient(A_I)
         return A_I
+    
     

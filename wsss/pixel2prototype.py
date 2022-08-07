@@ -293,3 +293,36 @@ class Pixel2Prototype(SEAM):
         else:
             return self.model(x)
         
+    def get_config(self):
+        return {**super(Pixel2Prototype, self).get_config(),
+                "prototype_confidence_rate": self.prototype_confidence_rate,
+                "nce_tau": self.nce_tau,
+                "cp_contrast_coef": self.cp_contrast_coef,
+                "cc_contrast_coef": self.cc_contrast_coef,
+                "intra_contrast_coef": self.intra_contrast_coef,
+                "hard_prototype_range": self.hard_prototype_range,
+                "hard_pixel_range": self.hard_pixel_range,
+                "background_threshold": self.background_threshold
+               }
+    
+    @staticmethod
+    def from_config(config):
+        model = tf.keras.models.Model.from_config(config.pop("model"))
+        image_input = model.inputs[0]
+        feature_output, categorical_feature, cam_feature, refined_cam_feature, project_feature, classify_output, classify_output_bg = model.outputs
+        p2p = Pixel2Prototype(image_input, feature_output, **config)
+        p2p._build_models(image_input, feature_output, categorical_feature, 
+                            cam_feature, refined_cam_feature, project_feature, 
+                            classify_output, classify_output_bg)
+        return p2p
+    
+    @staticmethod
+    def load_model(filepath, **kwds):
+        model = tf.keras.models.load_model(filepath)
+        image_input = model.inputs[0]
+        feature_output, categorical_feature, cam_feature, refined_cam_feature, project_feature, classify_output, classify_output_bg = model.outputs
+        p2p = Pixel2Prototype(image_input, feature_output, **kwds)
+        p2p._build_models(image_input, feature_output, categorical_feature, 
+                            cam_feature, refined_cam_feature, project_feature, 
+                            classify_output, classify_output_bg)
+        return p2p
