@@ -53,7 +53,7 @@ class SEAM(tf.keras.models.Model):
         
         self.affine_weights = np.array([affine_rotate, 0, affine_rescale, affine_flip, affine_translation], dtype=np.float32)
         self.affine_weights /= self.affine_weights.sum()
-        self.affiner = Affine(affine_weights=self.affine_weights, fill_mode=fill_mode)
+        self.affiner = Affine(affine_weights=self.affine_weights, fill_mode=fill_mode, vertical_flip=False, rotate_domain=(-np.pi/9, np.pi/9))
         self.ER_reg_coef = ER_reg_coef
         self.ECR_reg_coef = ECR_reg_coef
         self.use_inverse_affine = use_inverse_affine
@@ -299,5 +299,4 @@ class SEAM(tf.keras.models.Model):
         A_I = self.affiner.apply_affine(I, code, args)
         A_I = tf.stop_gradient(A_I)
         return A_I
-    
     

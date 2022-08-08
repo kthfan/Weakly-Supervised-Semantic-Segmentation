@@ -29,7 +29,7 @@ class Affine:
     '''
     def __init__(self, affine_weights=None, fill_mode='nearest', epsilon=1e-6,
                  rotate_domain=(-np.pi/2, np.pi/2), rescale_ratio_domain=(0.5, 2),rescale_scale_domain=(1, 2),
-                 rescale_x_domain=(0, 1), rescale_y_domain=(0, 1),
+                 rescale_x_domain=(0, 1), rescale_y_domain=(0, 1), vertical_flip=True, horizontal_flip=True,
                  translation_x_domain=(-0.5, 0.5), translation_y_domain=(-0.5, 0.5),
                  shear_x_domain=(-0.5, 0.5), shear_y_domain=(-0.5, 0.5), shear_scale_domain=(0.5, 2)):
         
@@ -73,7 +73,7 @@ class Affine:
             [rotate_domain[1], np.nan, np.nan, np.nan, np.nan],
             [rescale_ratio_domain[1], 1, rescale_x_domain[1], rescale_y_domain[1], rescale_scale_domain[1]],
             [np.nan, np.nan, rescale_x_domain[1], rescale_y_domain[1], rescale_scale_domain[1]],
-            [1, 1, np.nan, np.nan, np.nan],
+            [1 if vertical_flip else 0, 1 if horizontal_flip else 0, np.nan, np.nan, np.nan],
             [translation_x_domain[1], translation_y_domain[1], np.nan, np.nan, np.nan],
             [shear_x_domain[1], shear_y_domain[1], shear_scale_domain[1], np.nan, np.nan]
         ], dtype=tf.float32)
