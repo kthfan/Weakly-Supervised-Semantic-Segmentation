@@ -28,7 +28,7 @@ x = tf.keras.layers.Conv2D(128, 3, padding="same")(x0)
 
 Create SEAM model:
 ```python
-seam = SEAM(img_input, x, classes=10)
+seam = SEAM(img_input, x, classes=10, classification_activation="softmax")
 ```
 
 Train model:
@@ -43,10 +43,22 @@ pred_y = seam.predict(X_test)
 ```
 
 
-Save and load model:
+Save model:
 ```python
 seam.save("./model.h5")
-seam1 = SEAM.load("./model.h5", classes=10)
+config = seam.get_config()
+
+with open('config.json', 'w') as f:
+    json.dump(config, f)
+
+```
+
+Load model:
+```python
+with open('config.json') as f:
+    config = json.load(f)
+
+seam = SEAM.load("./model.h5", **config)
 ```
 
 ## Pixel2Prototype
@@ -54,7 +66,7 @@ The implementation of Weakly Supervised Semantic Segmentation by Pixel-to-Protot
 
 Similars to SEAM:
 ```python
-img_input = tf.keras.layers.Input((28, 28, 1))
+img_input = tf.keras.layers.Input((224, 224, 3))
 x = tf.keras.layers.Conv2D(64, 3, padding="same")(img_input)
 x = tf.keras.layers.BatchNormalization()(x)
 x = tf.keras.layers.Activation("relu")(x)
@@ -62,7 +74,7 @@ x = tf.keras.layers.Conv2D(128, 3, padding="same")(x)
 proj = tf.keras.layers.Conv2D(128, 1)(x)
         
 p2p = Pixel2Prototype(img_input, x, 10, project_feature=proj)
-p2p.compile(tf.keras.optimizers.Adam(learning_rate=1e-4), loss=tf.keras.losses.categorical_crossentropy, metrics=['accuracy'])
+p2p.compile(tf.keras.optimizers.Adam(learning_rate=1e-4), loss=tf.keras.losses.binary_crossentropy, metrics=['accuracy'])
 p2p.fit(X_train, y_train)
 
 ```
