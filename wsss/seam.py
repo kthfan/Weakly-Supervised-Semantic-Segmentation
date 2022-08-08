@@ -40,9 +40,10 @@ class SEAM(tf.keras.models.Model):
         
         pred_y = seam.predict(X_test)
         
-        # save model
+        # save and load model
+        config = seam.get_config()
         seam.save("./model.h5")
-        seam1 = SEAM.load("./model.h5", classes=10, min_pooling_rate=0.7)
+        seam1 = SEAM.load_model("./model.h5", **config)
         
     '''
     def __init__(self, image_input, feature_output, classes, correlation_feature=None,
