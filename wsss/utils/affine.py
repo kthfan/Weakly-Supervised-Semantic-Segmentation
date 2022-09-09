@@ -3,8 +3,6 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_addons as tfa 
 
-
-
 class Affine:
     '''
     Supported affine transformations: rotate, rescale(both height and width), resize, flip, translation, shear.
@@ -13,7 +11,9 @@ class Affine:
                         of affine transformations.
         fill_mode:      Points outside the boundaries of the input are filled according to the given mode 
                         (one of {'constant', 'nearest', 'reflect', 'wrap'}). 
-        epsilon:        Small float added to variance to avoid dividing by zero. 
+        epsilon:        Small float added to variance to avoid dividing by zero.
+        vertical_flip:  While doing random flip affine transformation, include vertical flip.
+        horizontal_flip:  While doing random flip affine transformation, include horizontal flip.
         *_domain:       Domain of affine transformations arguments, i.e., domain of rotate angle.
         
     # Usage:
@@ -96,7 +96,7 @@ class Affine:
             return arg
         
     def inverse_affine_code(self, code, args):
-        inv_args = tf.map_fn(lambda e: self._inverse_args(e[0], e[1]) ,(code, args), dtype=args.dtype)
+        inv_args = tf.map_fn(lambda e: self._inverse_args(e[0], e[1]) ,(code, args), fn_output_signature=args.dtype)
         return inv_args
     
     def random_affine_code(self, size):
@@ -129,7 +129,7 @@ class Affine:
         return I
     def apply_affine(self, I, code, args):
         original_shape = I.shape
-        A_I = tf.map_fn(lambda e: self._standard_affine(e[0], e[1], e[2]), (I, code, args), dtype=I.dtype)
+        A_I = tf.map_fn(lambda e: self._standard_affine(e[0], e[1], e[2]), (I, code, args), fn_output_signature=I.dtype)
         A_I.set_shape(original_shape) # ensure shape of images are the same after affine transformation.
         return A_I
     
@@ -308,4 +308,3 @@ class Affine:
                                   0, 0], fill_mode=fill_mode
                                )
         return I
-

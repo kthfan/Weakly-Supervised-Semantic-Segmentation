@@ -1,6 +1,7 @@
-import numpy as np
+
 import tensorflow as tf
-from .seam import *
+from .seam import SEAM
+
 
 class Pixel2Prototype(SEAM):
     '''
@@ -23,7 +24,7 @@ class Pixel2Prototype(SEAM):
         background_threshold: In contrastive learning, pixel that max(cam) < background_threshold will be considered as background pixel.
                               If None, persist original background score.
     # Usage:
-        img_input = tf.keras.layers.Input((28, 28, 1))
+        img_input = tf.keras.layers.Input((224, 224, 3))
         x = tf.keras.layers.Conv2D(64, 3, padding="same")(img_input)
         x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Activation("relu")(x)
@@ -31,7 +32,7 @@ class Pixel2Prototype(SEAM):
         proj = tf.keras.layers.Conv2D(128, 1)(x)
         
         p2p = Pixel2Prototype(img_input, x, 10, project_feature=proj)
-        p2p.compile(tf.keras.optimizers.Adam(learning_rate=1e-4), loss=tf.keras.losses.categorical_crossentropy, metrics=['accuracy'])
+        p2p.compile(tf.keras.optimizers.Adam(learning_rate=1e-4), loss=tf.keras.losses.binary_crossentropy, metrics=['accuracy'])
         p2p.fit(X_train, y_train)
     '''
     def __init__(self, image_input, feature_output, classes, project_feature=None, correlation_feature=None,  
@@ -57,24 +58,20 @@ class Pixel2Prototype(SEAM):
         if project_feature is None:
             project_feature = tf.keras.layers.Conv2D(128, 1, use_bias=False)(feature_output)
             
-        categorical_feature, cam_feature, refined_cam_feature, classify_output, classify_output_bg = super(Pixel2Prototype, self)._cnn_head(feature_output, correlation_feature, classes)
-        
-        # ensure height and width of project_feature and refined_cam_feature are equal
-        if refined_cam_feature.shape[1] != project_feature.shape[1] or refined_cam_feature.shape[2] != project_feature.shape[2]:
-            project_feature = tf.image.resize(project_feature, (refined_cam_feature.shape[1], refined_cam_feature.shape[2]))
-            
-        return categorical_feature, cam_feature, refined_cam_feature, project_feature, classify_output, classify_output_bg
+        categorical_feature, cam_feature, refined_cam_feature, classify_output = super(Pixel2Prototype, self)._cnn_head(feature_output, correlation_feature, classes)
+           
+        return categorical_feature, cam_feature, refined_cam_feature, project_feature, classify_output
     
     def _build_models(self, image_input, feature_output, categorical_feature, 
                       cam_feature, refined_cam_feature, project_feature, 
-                      classify_output, classify_output_bg):
+                      classify_output):
         
-        super(Pixel2Prototype, self)._build_models(image_input, feature_output, categorical_feature, cam_feature, refined_cam_feature, classify_output, classify_output_bg )
+        super(Pixel2Prototype, self)._build_models(image_input, feature_output, categorical_feature, cam_feature, refined_cam_feature, classify_output )
         
         self.model = tf.keras.models.Model(inputs=image_input, 
                                            outputs=[feature_output, categorical_feature, 
                                                     cam_feature, refined_cam_feature, project_feature, 
-                                                    classify_output, classify_output_bg])
+                                                    classify_output])
         
     def _get_prototype(self, cam_feature, project_feature, rate=None):
         if rate is None:
@@ -170,7 +167,7 @@ class Pixel2Prototype(SEAM):
                     )[:random_bound[i]]      # get random_bound[i] shuffled pixel losses
                 ), 
                 tf.range(tf.shape(category_pixels)[0], dtype=category_pixels.dtype),
-            dtype=hard_pixel_loss.dtype) # (|category_pixels|, )
+            fn_output_signature=hard_pixel_loss.dtype) # (|category_pixels|, )
         random_pixel_loss = tf.reduce_mean(random_pixel_loss)
         
         ## select hard_pixel_loss between (hard_pixel_range[0], hard_pixel_range[1])
@@ -178,7 +175,7 @@ class Pixel2Prototype(SEAM):
         lower_bound = tf.cast(tf.cast(category_pixels, tf.float32) * hard_pixel_range[0], category_pixels.dtype)
         hard_pixel_loss = tf.map_fn(lambda i: tf.reduce_mean(hard_pixel_loss[lower_bound[i]:upper_bound[i], i]), 
                                     tf.range(tf.shape(category_pixels)[0], dtype=category_pixels.dtype),
-                                   dtype=hard_pixel_loss.dtype) # (|category_pixels|, )
+                                   fn_output_signature=hard_pixel_loss.dtype) # (|category_pixels|, )
         hard_pixel_loss = tf.reduce_mean(hard_pixel_loss)
         
         # overall loss
@@ -186,13 +183,21 @@ class Pixel2Prototype(SEAM):
         return loss
     
     def _loss(self, affine_code, affine_args, inv_affine_args, x, y, A_x, 
-              F_o, F_t, F_o_r, F_t_r, F_proj_o, F_proj_t, pred_y_o, pred_y_t):
+              F_o, F_t, cam_o, cam_t, F_o_r, F_t_r, F_proj_o, F_proj_t, pred_y_o, pred_y_t):
         
         # features and losses from SEAM
-        features, losses = super(Pixel2Prototype, self)._loss(affine_code, affine_args, inv_affine_args, x, y, A_x, F_o, F_t, F_o_r, F_t_r, pred_y_o, pred_y_t)
+        features, losses = super(Pixel2Prototype, self)._loss(affine_code, affine_args, inv_affine_args, x, y, A_x, F_o, F_t, cam_o, cam_t, F_o_r, F_t_r, pred_y_o, pred_y_t)
             
-        pred_y_o, _, _, F_o, F_t, F_o_r, F_t_r, A_F_o, A_F_o_r, inv_A_F_t, inv_A_F_t_r = features
+        pred_y_o, _, _, _, _, F_o_r, F_t_r, A_F_o, A_F_o_r, inv_A_F_t, inv_A_F_t_r = features
         loss_cls, L_ER, L_ECR, loss_min = losses      
+        
+        # ensure height and width of F_o_r and F_proj_o are equal
+        if F_proj_o.shape[1] != F_o_r.shape[1] or F_proj_o.shape[2] != F_o_r.shape[2]:
+            F_o_r = tf.image.resize(F_o_r, (F_proj_o.shape[1], F_proj_o.shape[2]))
+            F_t_r = tf.image.resize(F_t_r, (F_proj_t.shape[1], F_proj_t.shape[2]))
+            A_F_o_r = tf.image.resize(A_F_o_r, (F_proj_o.shape[1], F_proj_o.shape[2]))
+            if self.use_inverse_affine:
+                inv_A_F_t_r = tf.image.resize(inv_A_F_t_r, (F_proj_t.shape[1], F_proj_t.shape[2]))
         
         # contrastive learning loss
         ## set background score
@@ -209,8 +214,8 @@ class Pixel2Prototype(SEAM):
         F_proj_o = tf.linalg.normalize(F_proj_o, axis=-1)[0]
         F_proj_t = tf.linalg.normalize(F_proj_t, axis=-1)[0]
         ### Apply affine in project_feature F_proj_o and F_proj_t
-        A_F_proj_o = self._affine(F_proj_o, affine_code, affine_args)
-        inv_A_F_proj_t = self._affine(F_proj_t, affine_code, inv_affine_args) if self.use_inverse_affine else None
+        A_F_proj_o = self.affiner.apply_affine(F_proj_o, affine_code, affine_args)
+        inv_A_F_proj_t = self.affiner.apply_affine(F_proj_t, affine_code, inv_affine_args) if self.use_inverse_affine else None
         
         ## pseudo pixel-level label
         pseudo_label_o = tf.argmax(cam_o, axis=-1) # (batch_size, h, w)
@@ -260,14 +265,14 @@ class Pixel2Prototype(SEAM):
         if training and y is not None:
             # apply affine
             affine_code, affine_args, inv_affine_args = self._ranomd_affine_code(tf.shape(x)[0])
-            A_x = self._affine(x, affine_code, affine_args)
-
+            A_x = self.affiner.apply_affine(x, affine_code, affine_args)
+            
             # get features from simsiam model
-            _, F_o, _, F_o_r, F_proj_o, pred_y_o, _ = self.model(x, training=True)
-            _, F_t, _, F_t_r, F_proj_t, pred_y_t, _ = self.model(A_x, training=True)
+            _, F_o, cam_o, F_o_r, F_proj_o, pred_y_o = self.model(x, training=True)
+            _, F_t, cam_t, F_t_r, F_proj_t, pred_y_t = self.model(A_x, training=True)
             
             # compute losses
-            features, losses = self._loss(affine_code, affine_args, inv_affine_args, x, y, A_x, F_o, F_t, F_o_r, F_t_r, F_proj_o, F_proj_t, pred_y_o, pred_y_t)
+            features, losses = self._loss(affine_code, affine_args, inv_affine_args, x, y, A_x, F_o, F_t, cam_o, cam_t, F_o_r, F_t_r, F_proj_o, F_proj_t, pred_y_o, pred_y_t)
             loss_cls, L_ER, L_ECR, loss_min, L_cp, L_cc, L_intra = losses   
             
             self.add_loss(L_ER)
@@ -309,20 +314,20 @@ class Pixel2Prototype(SEAM):
     def from_config(config):
         model = tf.keras.models.Model.from_config(config.pop("model"))
         image_input = model.inputs[0]
-        feature_output, categorical_feature, cam_feature, refined_cam_feature, project_feature, classify_output, classify_output_bg = model.outputs
+        feature_output, categorical_feature, cam_feature, refined_cam_feature, project_feature, classify_output = model.outputs
         p2p = Pixel2Prototype(image_input, feature_output, **config)
         p2p._build_models(image_input, feature_output, categorical_feature, 
                             cam_feature, refined_cam_feature, project_feature, 
-                            classify_output, classify_output_bg)
+                            classify_output)
         return p2p
     
     @staticmethod
     def load_model(filepath, **kwds):
         model = tf.keras.models.load_model(filepath)
         image_input = model.inputs[0]
-        feature_output, categorical_feature, cam_feature, refined_cam_feature, project_feature, classify_output, classify_output_bg = model.outputs
+        feature_output, categorical_feature, cam_feature, refined_cam_feature, project_feature, classify_output = model.outputs
         p2p = Pixel2Prototype(image_input, feature_output, **kwds)
         p2p._build_models(image_input, feature_output, categorical_feature, 
                             cam_feature, refined_cam_feature, project_feature, 
-                            classify_output, classify_output_bg)
+                            classify_output)
         return p2p
